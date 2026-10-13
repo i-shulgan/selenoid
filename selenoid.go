@@ -209,8 +209,11 @@ func create(w http.ResponseWriter, r *http.Request) {
 
 	var resp *http.Response
 	i := 1
+	sessionPath := r.URL.Path
 	for ; ; i++ {
-		r.URL.Host, r.URL.Path = u.Host, path.Join(u.Path, r.URL.Path)
+		// Built from the original path every time: retries and the /wd/hub
+		// fallback must not prefix the path again.
+		r.URL.Host, r.URL.Path = u.Host, path.Join(u.Path, sessionPath)
 		newBody := removeSelenoidOptions(body)
 		req, _ := http.NewRequest(http.MethodPost, r.URL.String(), bytes.NewReader(newBody))
 		contentType := r.Header.Get("Content-Type")
