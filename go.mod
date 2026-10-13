@@ -17,6 +17,7 @@ require (
 	github.com/moby/moby/client v0.6.2
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.12.1
+	go.uber.org/goleak v1.3.0
 	golang.org/x/net v0.61.0
 )
 
