@@ -40,13 +40,16 @@ func s3Mux() http.Handler {
 	return mux
 }
 
-var testSession = &session.Session{
-	Quota: "some-user",
-	Caps: session.Caps{
-		Name:     "internet explorer",
-		Version:  "11",
-		Platform: "WINDOWS",
-	},
+// testS3Session returns a new session: tests modify its capabilities.
+func testS3Session() *session.Session {
+	return &session.Session{
+		Quota: "some-user",
+		Caps: session.Caps{
+			Name:     "internet explorer",
+			Version:  "11",
+			Platform: "WINDOWS",
+		},
+	}
 }
 
 func TestS3Uploader(t *testing.T) {
@@ -68,7 +71,7 @@ func TestS3Uploader(t *testing.T) {
 		Event: event.Event{
 			RequestId: 4342,
 			SessionId: "some-session-id",
-			Session:   testSession,
+			Session:   testS3Session(),
 		},
 		Name: f.Name(),
 		Type: "log",
@@ -95,7 +98,7 @@ func TestGetKey(t *testing.T) {
 	input := event.CreatedFile{
 		Event: event.Event{
 			SessionId: "some-Session-id",
-			Session:   testSession,
+			Session:   testS3Session(),
 			RequestId: 12345,
 		},
 
