@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/aerokube/selenoid/session"
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 )
 
 // Session - session id and vnc flag
