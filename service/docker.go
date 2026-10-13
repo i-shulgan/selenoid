@@ -460,12 +460,12 @@ func getHostPort(env Environment, servicePort string, caps session.Caps, stat ct
 			}
 		} else {
 			fn = func(containerPort string, port network.Port) string {
-				return net.JoinHostPort("127.0.0.1", stat.NetworkSettings.Ports[port][0].HostPort)
+				return boundHostPort("127.0.0.1", stat, port)
 			}
 		}
 	} else {
 		fn = func(containerPort string, port network.Port) string {
-			return net.JoinHostPort(env.IP, stat.NetworkSettings.Ports[port][0].HostPort)
+			return boundHostPort(env.IP, stat, port)
 		}
 	}
 	hp := session.HostPort{
@@ -482,13 +482,26 @@ func getHostPort(env Environment, servicePort string, caps session.Caps, stat ct
 	return hp
 }
 
+// boundHostPort returns host:port the container port is published on, or ""
+// when Docker did not bind it.
+func boundHostPort(host string, stat ctr.InspectResponse, port network.Port) string {
+	if stat.NetworkSettings == nil {
+		return ""
+	}
+	bindings := stat.NetworkSettings.Ports[port]
+	if len(bindings) == 0 || bindings[0].HostPort == "" {
+		return ""
+	}
+	return net.JoinHostPort(host, bindings[0].HostPort)
+}
+
 func getContainerPorts(stat ctr.InspectResponse) map[string]string {
-	ns := stat.NetworkSettings
-
-	var exposedPorts = make(map[string]string)
-
-	if len(ns.Ports) > 0 {
-		for port, portBindings := range ns.Ports {
+	exposedPorts := make(map[string]string)
+	if stat.NetworkSettings == nil {
+		return exposedPorts
+	}
+	for port, portBindings := range stat.NetworkSettings.Ports {
+		if len(portBindings) > 0 {
 			exposedPorts[port.Port()] = portBindings[0].HostPort
 		}
 	}

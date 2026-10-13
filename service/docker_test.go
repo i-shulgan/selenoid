@@ -1,11 +1,13 @@
 package service
 
 import (
+	"net/netip"
 	"sync"
 	"testing"
 
 	"github.com/aerokube/selenoid/session"
 	ctr "github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	assert "github.com/stretchr/testify/require"
 )
 
@@ -37,4 +39,39 @@ func TestGetLogConfigConcurrently(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestHostPortWithoutBindings(t *testing.T) {
+	selenium := network.MustParsePort("4444/tcp")
+	vnc := network.MustParsePort("5900/tcp")
+	stat := ctr.InspectResponse{NetworkSettings: &ctr.NetworkSettings{Ports: network.PortMap{
+		selenium: {{HostPort: "32768"}},
+		vnc:      nil,
+	}}}
+	pc := map[string]network.Port{"4444": selenium, ports.VNC: vnc}
+	hp := getHostPort(Environment{IP: "10.0.0.1"}, "4444", session.Caps{VNC: true}, stat, pc)
+	assert.Equal(t, "10.0.0.1:32768", hp.Selenium)
+	assert.Equal(t, "", hp.VNC, "a port without bindings must not panic")
+	assert.Equal(t, "", hp.Devtools)
+	assert.Equal(t, map[string]string{"4444": "32768"}, getContainerPorts(stat))
+	assert.Empty(t, getContainerPorts(ctr.InspectResponse{}))
+}
+
+func TestGetContainerIP(t *testing.T) {
+	stat := ctr.InspectResponse{NetworkSettings: &ctr.NetworkSettings{Networks: map[string]*network.EndpointSettings{
+		"bridge": {IPAddress: netip.MustParseAddr("172.17.0.2")},
+		"custom": {IPAddress: netip.MustParseAddr("10.1.0.5")},
+	}}}
+	assert.Equal(t, "172.17.0.2", getContainerIP(DefaultContainerNetwork, stat))
+	assert.Equal(t, "10.1.0.5", getContainerIP("custom", stat))
+	assert.Equal(t, "10.1.0.5", getContainerIP("missing", stat), "falls back to a known address")
+	assert.Equal(t, "", getContainerIP("custom", ctr.InspectResponse{}))
+}
+
+func TestParseDNSServers(t *testing.T) {
+	addrs, err := parseDNSServers([]string{"8.8.8.8", "2001:4860:4860::8888"})
+	assert.NoError(t, err)
+	assert.Len(t, addrs, 2)
+	_, err = parseDNSServers([]string{"not-an-ip"})
+	assert.Error(t, err)
 }
