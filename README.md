@@ -1,15 +1,51 @@
 # Selenoid
-[![Build Status](https://github.com/aerokube/selenoid/workflows/build/badge.svg)](https://github.com/aerokube/selenoid/actions?query=workflow%3Abuild)
-[![Coverage](https://codecov.io/github/aerokube/selenoid/coverage.svg)](https://codecov.io/gh/aerokube/selenoid)
-[![Go Report Card](https://goreportcard.com/badge/github.com/aerokube/selenoid)](https://goreportcard.com/report/github.com/aerokube/selenoid)
-[![Release](https://img.shields.io/github/release/aerokube/selenoid.svg)](https://github.com/aerokube/selenoid/releases/latest)
-[![Docker Pulls](https://img.shields.io/docker/pulls/aerokube/selenoid.svg)](https://hub.docker.com/r/aerokube/selenoid)
-[![StackOverflow Tag](https://img.shields.io/badge/stackoverflow-selenoid-orange.svg?style=flat)](https://stackoverflow.com/questions/tagged/selenoid)
-
-**UNMAINTAINED**. Consider https://aerokube.com/moon/latest as alternative.
+[![ci](https://github.com/i-shulgan/selenoid/actions/workflows/ci.yml/badge.svg)](https://github.com/i-shulgan/selenoid/actions/workflows/ci.yml)
 
 Selenoid is a powerful implementation of [Selenium](http://github.com/SeleniumHQ/selenium) hub using [Docker](https://docker.com/) containers to launch browsers.
 ![Selenoid Animation](docs/img/selenoid-animation.gif)
+
+This is a maintained fork of [aerokube/selenoid](https://github.com/aerokube/selenoid), which is archived since 1.11.3. It pairs with [i-shulgan/ggr](https://github.com/i-shulgan/ggr) and with current Chrome images from [i-shulgan/images](https://github.com/i-shulgan/images).
+
+## Differences from upstream
+
+Fixes:
+
+* **File upload** (`-enable-file-upload`): a zip entry like `../../etc/cron.d/x` was written outside the session directory (zip slip), and the `/file` endpoint took the target directory from a request header, so any client could write files anywhere Selenoid can. Uploads are now confined to the directory of a running session; a shorter upload no longer keeps the tail of a previous file.
+* **New session retries** (`-retry-count` > 1) with drivers under `/wd/hub` went to `/wd/hub/wd/hub/session` and returned 404.
+* **Unexpected driver responses**: a non-string `sessionId` panicked the handler and leaked a queue slot for good (lowering `-limit`); a W3C reply without `capabilities` was passed to the client but the session was not registered; non-JSON replies (HTML error pages) gave an empty response, now a `session not created` error with the status and the beginning of the body.
+* **Race in `/devtools/`, `/download/`, `/clipboard/`**: they re-armed the session timeout without the session lock, concurrent requests could close the timer channel twice and panic.
+* **Container log config** (`-log-conf`): the shared configuration map was modified for every session, so the first test name stuck as the tag of all containers and parallel starts could crash Selenoid with `concurrent map writes`.
+* **Version by prefix** was chosen in random map order (`12` could pick `120.0`); now an exact match, then a whole version component, then the highest version.
+* A browser container was left running when connecting an `additionalNetworks` network failed; a port without host bindings panicked the handler; the readiness check could hang forever on a service that accepts connections but never answers.
+* A non-positive `sessionTimeout` killed the session at once; video and log directories were created without the execute bit; signals could be dropped.
+
+Build and delivery:
+
+* Go 1.27.2; Docker client moved from `github.com/docker/docker` to `github.com/moby/moby/client` (govulncheck reported GO-2026-4887 for the old module); the API version is negotiated with the daemon, Docker API 1.40 (Docker 19.03) or newer is required. S3 upload moved to aws-sdk-go-v2 (v1 is out of support).
+* Multi-stage `Dockerfile` building a static binary; `linux/amd64` and `linux/arm64` images in `ghcr.io/i-shulgan/selenoid`. The image runs as root because it needs the Docker socket. Build with `--build-arg BUILD_TAGS="s3 metadata"` for S3 upload and session metadata.
+* CI: `go vet`, `staticcheck`, `go test -race` and `govulncheck` with and without the `s3 metadata` tags; semantic versions with release-please.
+
+## Running
+
+```bash
+docker run -d --name selenoid -p 4444:4444 \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /etc/selenoid:/etc/selenoid:ro \
+    -v /opt/selenoid/video:/opt/selenoid/video \
+    ghcr.io/i-shulgan/selenoid:latest -limit 10
+```
+
+`/etc/selenoid/browsers.json` with the current Chrome from [i-shulgan/images](https://github.com/i-shulgan/images):
+
+```json
+{"chrome": {"default": "141.0", "versions": {"141.0": {"image": "ghcr.io/i-shulgan/chrome:141.0", "port": "4444", "path": "/", "shmSize": 2147483648}}}}
+```
+
+Browser images must be pulled beforehand. Image tags: `latest` and `sha-<short-sha>` for commits to `master`, `X.Y.Z`, `X.Y`, `X` for releases.
+
+## Releases and versioning
+
+Versions follow [Semantic Versioning](https://semver.org), continue from upstream `1.11.3` and are derived from [Conventional Commits](https://www.conventionalcommits.org) by [release-please](https://github.com/googleapis/release-please): `fix:` bumps the patch version, `feat:` the minor one, `!` or `BREAKING CHANGE:` the major one. After merges to `master` release-please opens a `chore(master): release X.Y.Z` pull request; merging it tags `vX.Y.Z`, publishes a GitHub release and pushes `ghcr.io/i-shulgan/selenoid:X.Y.Z`, `:X.Y` and `:X`. Pull request titles must follow Conventional Commits (the `pr-title` check), since squash merges use them as commit messages.
 
 ## Features
 
@@ -58,9 +94,9 @@ Maintained by a growing community:
 * StackOverflow [tag](https://stackoverflow.com/questions/tagged/selenoid)
 * YouTube [channel](https://www.youtube.com/channel/UC9HvE3FNfTvftzpvXi9c69g)
 
-## Complete Guide & Build Instructions
+## Complete Guide
 
-Complete reference guide (including building instructions) can be found at: http://aerokube.com/selenoid/latest/
+The upstream reference guide applies to this fork: http://aerokube.com/selenoid/latest/
 
 ## Selenoid in Kubernetes
 
