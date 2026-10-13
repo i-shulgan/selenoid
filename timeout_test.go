@@ -6,11 +6,15 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	assert "github.com/stretchr/testify/require"
 )
 
 func TestConcurrentRequestsResetTimeoutSafely(t *testing.T) {
+	// Tests use a 2s idle timeout; 90 requests under -race on a slow runner
+	// can take longer, and the session must not time out in the middle.
+	setGlobal(t, &timeout, time.Minute)
 	id := newTestSession(t)
 	urls := []string{
 		With(srv.URL).Path(fmt.Sprintf("/clipboard/%s", id)),

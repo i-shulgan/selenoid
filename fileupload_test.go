@@ -35,8 +35,12 @@ func newTestSession(t *testing.T) string {
 	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&sess))
 	id := sess["sessionId"]
 	t.Cleanup(func() {
-		sessions.Remove(id)
-		queue.Release()
+		// The session may be gone already (deleted or timed out); releasing
+		// its queue slot twice would block forever.
+		if _, ok := sessions.Get(id); ok {
+			sessions.Remove(id)
+			queue.Release()
+		}
 		_ = os.RemoveAll(filepath.Join(os.TempDir(), id))
 	})
 	return id
