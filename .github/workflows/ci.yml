@@ -143,3 +143,118 @@ jobs:
             BUILD_STAMP=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Static linux binaries for installing Selenoid without the image. Built on
+  # pull requests as a check; uploaded to the GitHub release when
+  # release-please creates one.
+  binaries:
+    needs: release
+    if: github.event_name == 'pull_request' || needs.release.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    env:
+      GOOS: linux
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: '0'
+      VERSION: ${{ needs.release.outputs.tag_name || github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          ldflags="-s -w -X main.gitRevision=$VERSION -X main.buildStamp=$stamp"
+          mkdir dist
+          # Plain names match upstream release assets.
+          go build -trimpath -ldflags "$ldflags" -o "dist/selenoid_linux_$GOARCH" .
+          go build -trimpath -tags "s3 metadata" -ldflags "$ldflags" -o "dist/selenoid_linux_${GOARCH}_s3_metadata" .
+
+      - name: Install qemu-user-static
+        if: matrix.goarch == 'arm64'
+        run: sudo apt-get update -q && sudo apt-get install -y -q qemu-user-static
+
+      - name: Check binaries
+        run: |
+          set -euo pipefail
+          for f in dist/*; do
+            file "$f"
+            file "$f" | grep -q 'statically linked'
+            if [ "$GOARCH" = arm64 ]; then
+              out=$(qemu-aarch64-static "$f" -version)
+            else
+              out=$("$f" -version)
+            fi
+            echo "$out"
+            grep -qF "Git Revision: $VERSION" <<<"$out"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release-assets:
+    needs: [release, binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.release.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: binaries-*
+          path: dist
+          merge-multiple: true
+
+      - run: chmod +x dist/selenoid_linux_*
+
+      # Deb packages are off until the BUILD_DEB repository variable is "true"
+      # (Settings -> Secrets and variables -> Actions -> Variables).
+      - uses: actions/setup-go@v6
+        if: vars.BUILD_DEB == 'true'
+        with:
+          go-version-file: go.mod
+
+      - name: Deb packages
+        if: vars.BUILD_DEB == 'true'
+        env:
+          VERSION: ${{ needs.release.outputs.tag_name || 'v0.0.0-dev' }}
+        run: |
+          set -euo pipefail
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          for arch in amd64 arm64; do
+            ARCH=$arch nfpm package -f nfpm.yaml -p deb -t dist/
+          done
+
+      - name: SHA256SUMS
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          sha256sum -- selenoid_linux_* *.deb > SHA256SUMS
+          cat SHA256SUMS
+          {
+            echo '### Release files'
+            echo '```'
+            ls -l
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload to the release
+        if: needs.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
