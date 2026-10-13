@@ -651,6 +651,9 @@ func reverseProxy(hostFn func(sess *session.Session) string, status string) func
 		sid, remainingPath := splitRequestPath(r.URL.Path)
 		sess, ok := sessions.Get(sid)
 		if ok {
+			// Same lock as proxy(): concurrent requests must not close the
+			// timer channel twice.
+			sess.Lock.Lock()
 			select {
 			case <-sess.TimeoutCh:
 			default:
@@ -659,6 +662,7 @@ func reverseProxy(hostFn func(sess *session.Session) string, status string) func
 			sess.TimeoutCh = onTimeout(sess.Timeout, func() {
 				request{r}.session(sid).Delete(requestId)
 			})
+			sess.Lock.Unlock()
 			(&httputil.ReverseProxy{
 				Rewrite: func(pr *httputil.ProxyRequest) {
 					setForwardedFor(pr)
