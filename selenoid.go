@@ -275,32 +275,49 @@ func create(w http.ResponseWriter, r *http.Request) {
 	location := resp.Header.Get("Location")
 	if location != "" {
 		l, err := url.Parse(location)
-		if err == nil {
-			fragments := strings.Split(l.Path, slash)
-			s.ID = fragments[len(fragments)-1]
-			u := &url.URL{
-				Scheme: "http",
-				Host:   hostname,
-				Path:   path.Join("/wd/hub/session", s.ID),
-			}
-			w.Header().Add("Location", u.String())
-			w.WriteHeader(resp.StatusCode)
+		if err != nil {
+			log.Printf("[%d] [ERROR_PROCESSING_RESPONSE] [%v]", requestId, err)
+			jsonerror.SessionNotCreated(fmt.Errorf("invalid Location header from %s: %v", u.String(), err)).Encode(w)
+			queue.Drop()
+			cancel()
+			return
 		}
+		fragments := strings.Split(l.Path, slash)
+		s.ID = fragments[len(fragments)-1]
+		u := &url.URL{
+			Scheme: "http",
+			Host:   hostname,
+			Path:   path.Join("/wd/hub/session", s.ID),
+		}
+		w.Header().Add("Location", u.String())
+		w.WriteHeader(resp.StatusCode)
 	} else {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			log.Printf("[%d] [ERROR_READING_RESPONSE] [%v]", requestId, err)
+			jsonerror.SessionNotCreated(fmt.Errorf("failed to read response from %s: %v", u.String(), err)).Encode(w)
 			queue.Drop()
 			cancel()
-			w.WriteHeader(resp.StatusCode)
 			return
 		}
 		newBody, sessionId, err := processBody(body, r.Host)
 		if err != nil {
+			// Usually an HTML error page: the image does not serve WebDriver.
 			log.Printf("[%d] [ERROR_PROCESSING_RESPONSE] [%v]", requestId, err)
+			notCreated := jsonerror.SessionNotCreated(fmt.Errorf("unexpected response from %s: %s: %s", u.String(), resp.Status, abbreviate(body)))
+			if resp.StatusCode >= http.StatusBadRequest {
+				notCreated.Status = resp.StatusCode
+			}
+			notCreated.Encode(w)
 			queue.Drop()
 			cancel()
-			w.WriteHeader(resp.StatusCode)
+			return
+		}
+		if sessionId == "" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			log.Printf("[%d] [SESSION_FAILED] [%s] [no session ID in response]", requestId, u.String())
+			jsonerror.SessionNotCreated(fmt.Errorf("no session ID in response from %s: %s", u.String(), abbreviate(body))).Encode(w)
+			queue.Drop()
+			cancel()
 			return
 		}
 		resp.Body = io.NopCloser(bytes.NewReader(newBody))
@@ -426,20 +443,14 @@ func processBody(input []byte, host string) ([]byte, string, error) {
 		if si, ok := rawId.(string); ok {
 			sessionId = si
 		}
-	} else {
-		if raw, ok := body["value"]; ok {
-			if v, ok := raw.(map[string]interface{}); ok {
-				if raw, ok := v["capabilities"]; ok {
-					if c, ok := raw.(map[string]interface{}); ok {
-						sessionId = v["sessionId"].(string)
-						c["se:cdp"] = fmt.Sprintf("ws://%s/devtools/%s/", host, sessionId)
-						if rbv, ok := c["browserVersion"]; ok {
-							if bv, ok := rbv.(string); ok {
-								c["se:cdpVersion"] = bv
-							}
-						}
-					}
-				}
+	} else if v, ok := body["value"].(map[string]interface{}); ok {
+		if si, ok := v["sessionId"].(string); ok {
+			sessionId = si
+		}
+		if c, ok := v["capabilities"].(map[string]interface{}); ok && sessionId != "" {
+			c["se:cdp"] = fmt.Sprintf("ws://%s/devtools/%s/", host, sessionId)
+			if bv, ok := c["browserVersion"].(string); ok {
+				c["se:cdpVersion"] = bv
 			}
 		}
 	}
@@ -448,6 +459,16 @@ func processBody(input []byte, host string) ([]byte, string, error) {
 		return nil, sessionId, fmt.Errorf("marshal response: %v", err)
 	}
 	return ret, sessionId, nil
+}
+
+// abbreviate shortens a response body for error messages.
+func abbreviate(body []byte) string {
+	const maxLen = 200
+	s := strings.TrimSpace(string(body))
+	if len(s) > maxLen {
+		return s[:maxLen] + "..."
+	}
+	return s
 }
 
 func preprocessSessionId(sid string) string {

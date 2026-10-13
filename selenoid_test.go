@@ -438,7 +438,12 @@ func TestSessionCreatedRemoveExtensionCapabilities(t *testing.T) {
 		_, chromeOptionsPresent = browser.W3CCaps.AlwaysMatch["goog:chromeOptions"]
 		assert.Len(t, browser.W3CCaps.FirstMatch, 1)
 		_, firstMatchPresent = browser.W3CCaps.FirstMatch[0]["selenoid:options"]
+		_, _ = w.Write([]byte(`{"value":{"sessionId":"remove-extension-caps","capabilities":{}}}`))
 	}))
+	t.Cleanup(func() {
+		sessions.Remove("remove-extension-caps")
+		queue.Release()
+	})
 	manager = &HTTPTest{Handler: root}
 
 	resp, err := httpClient.Post(With(srv.URL).Path("/wd/hub/session"), "", bytes.NewReader([]byte(`{"desiredCapabilities": {"browserName": "chrome", "selenoid:options": {"enableVNC": true}}, "capabilities":{"alwaysMatch":{"browserName": "chrome", "goog:chromeOptions": {"args": ["headless"]}, "selenoid:options":{"enableVNC": true}}, "firstMatch": [{"platform": "linux", "selenoid:options": {"enableVideo": true}}]}}`)))
