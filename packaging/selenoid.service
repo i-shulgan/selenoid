@@ -1,0 +1,23 @@
+[Unit]
+Description=Selenoid
+Documentation=https://github.com/i-shulgan/selenoid
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+User=selenoid
+# /var/lib/selenoid, owned by the selenoid user.
+StateDirectory=selenoid
+# Extra flags, e.g. SELENOID_ARGS="-limit 10 -log-output-dir /var/lib/selenoid/logs".
+Environment=SELENOID_ARGS=
+EnvironmentFile=-/etc/default/selenoid
+ExecStart=/usr/bin/selenoid -listen :4444 -conf /etc/selenoid/browsers.json -video-output-dir /var/lib/selenoid/video $SELENOID_ARGS
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+# Running sessions get -graceful-period (300s by default) on stop.
+TimeoutStopSec=330
+
+[Install]
+WantedBy=multi-user.target

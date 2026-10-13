@@ -1,0 +1,36 @@
+# Debian package, built by .github/workflows/ci.yml when the BUILD_DEB
+# repository variable is "true":
+#   VERSION=v1.12.0 ARCH=amd64 nfpm package -p deb -t dist/
+# expects the binary in dist/selenoid_linux_${ARCH}.
+name: selenoid
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: i-shulgan <46299173+i-shulgan@users.noreply.github.com>
+description: |-
+  Selenium Hub successor running browsers within Docker containers.
+  The package installs the binary and a systemd unit; the service is not
+  started automatically and needs /etc/selenoid/browsers.json.
+vendor: i-shulgan
+homepage: https://github.com/i-shulgan/selenoid
+license: Apache-2.0
+
+depends:
+  - docker-ce | docker.io
+
+contents:
+  - src: dist/selenoid_linux_${ARCH}
+    expand: true
+    dst: /usr/bin/selenoid
+    file_info:
+      mode: 0755
+  - src: packaging/selenoid.service
+    dst: /lib/systemd/system/selenoid.service
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: packaging/postinst.sh
+  postremove: packaging/postrm.sh
