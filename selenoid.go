@@ -25,13 +25,13 @@ import (
 
 	"github.com/aerokube/selenoid/info"
 
+	"dario.cat/mergo"
 	"github.com/aerokube/selenoid/event"
 	"github.com/aerokube/selenoid/jsonerror"
 	"github.com/aerokube/selenoid/service"
 	"github.com/aerokube/selenoid/session"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/imdario/mergo"
 	"golang.org/x/net/websocket"
 )
 

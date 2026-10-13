@@ -4,14 +4,10 @@
 package main
 
 import (
-	"context"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/aerokube/selenoid/event"
 	"github.com/aerokube/selenoid/session"
@@ -25,17 +21,6 @@ var (
 
 func init() {
 	s3Srv = httptest.NewServer(s3Mux())
-	dialer := &net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-		DualStack: true,
-	}
-	http.DefaultTransport.(*http.Transport).DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		if strings.Contains(addr, "s3-mock.example.com") {
-			addr = s3Srv.Listener.Addr().String()
-		}
-		return dialer.DialContext(ctx, network, addr)
-	}
 }
 
 func s3Mux() http.Handler {
@@ -55,7 +40,8 @@ var testSession = &session.Session{
 
 func TestS3Uploader(t *testing.T) {
 	uploader := &upload.S3Uploader{
-		Endpoint:          "http://s3-mock.example.com",
+		Endpoint:          s3Srv.URL,
+		ForcePathStyle:    true,
 		Region:            "us-west-1",
 		AccessKey:         "some-access-key",
 		SecretKey:         "some-secret-key",
