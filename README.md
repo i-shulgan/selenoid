@@ -43,9 +43,43 @@ docker run -d --name selenoid -p 4444:4444 \
 
 Browser images must be pulled beforehand. Image tags: `latest` and `sha-<short-sha>` for commits to `master`, `X.Y.Z`, `X.Y`, `X` for releases.
 
+## Installation without Docker
+
+Every release also has static Linux binaries (built without CGO, they run on Debian 13 and other distributions) and `SHA256SUMS`:
+
+| File | Content |
+|------|---------|
+| `selenoid_linux_amd64`, `selenoid_linux_arm64` | default build, same names as upstream release assets |
+| `selenoid_linux_amd64_s3_metadata`, `selenoid_linux_arm64_s3_metadata` | built with the `s3 metadata` tags: S3 upload and session metadata |
+| `SHA256SUMS` | SHA-256 of all files of the release |
+
+```bash
+VERSION=vX.Y.Z
+curl -fsSLO https://github.com/i-shulgan/selenoid/releases/download/$VERSION/selenoid_linux_amd64 \
+  && curl -fsSLO https://github.com/i-shulgan/selenoid/releases/download/$VERSION/SHA256SUMS \
+  && sha256sum -c --ignore-missing SHA256SUMS
+sudo install -m 0755 selenoid_linux_amd64 /usr/bin/selenoid
+selenoid -version
+```
+
+Ansible checks the binary against the same file:
+
+```yaml
+- name: Install selenoid
+  ansible.builtin.get_url:
+    url: "https://github.com/i-shulgan/selenoid/releases/download/{{ selenoid_version }}/selenoid_linux_amd64"
+    checksum: "sha256:https://github.com/i-shulgan/selenoid/releases/download/{{ selenoid_version }}/SHA256SUMS"
+    dest: /usr/bin/selenoid
+    mode: "0755"
+```
+
+Selenoid needs access to the Docker socket: run it as root or as a user in the `docker` group. [`packaging/selenoid.service`](packaging/selenoid.service) is a systemd unit for a `selenoid` system user (`useradd --system --no-create-home --shell /usr/sbin/nologin --groups docker selenoid`); it reads `/etc/selenoid/browsers.json`, writes videos to `/var/lib/selenoid/video` and takes extra flags from `SELENOID_ARGS` in `/etc/default/selenoid`.
+
+A deb package (`selenoid_X.Y.Z_amd64.deb`, `selenoid_X.Y.Z_arm64.deb`: the binary, the systemd unit, the `selenoid` user, `Depends: docker-ce | docker.io`, the service is not started) is described in [`nfpm.yaml`](nfpm.yaml) but not published yet. To add it to releases and `SHA256SUMS`, set the repository variable `BUILD_DEB` to `true` (**Settings → Secrets and variables → Actions → Variables**).
+
 ## Releases and versioning
 
-Versions follow [Semantic Versioning](https://semver.org), continue from upstream `1.11.3` and are derived from [Conventional Commits](https://www.conventionalcommits.org) by [release-please](https://github.com/googleapis/release-please): `fix:` bumps the patch version, `feat:` the minor one, `!` or `BREAKING CHANGE:` the major one. After merges to `master` release-please opens a `chore(master): release X.Y.Z` pull request; merging it tags `vX.Y.Z`, publishes a GitHub release and pushes `ghcr.io/i-shulgan/selenoid:X.Y.Z`, `:X.Y` and `:X`. Pull request titles must follow Conventional Commits (the `pr-title` check), since squash merges use them as commit messages.
+Versions follow [Semantic Versioning](https://semver.org), continue from upstream `1.11.3` and are derived from [Conventional Commits](https://www.conventionalcommits.org) by [release-please](https://github.com/googleapis/release-please): `fix:` bumps the patch version, `feat:` the minor one, `!` or `BREAKING CHANGE:` the major one. After merges to `master` release-please opens a `chore(master): release X.Y.Z` pull request; merging it tags `vX.Y.Z`, publishes a GitHub release with the binaries and `SHA256SUMS` and pushes `ghcr.io/i-shulgan/selenoid:X.Y.Z`, `:X.Y` and `:X`. Pull request titles must follow Conventional Commits (the `pr-title` check), since squash merges use them as commit messages.
 
 ## Features
 
