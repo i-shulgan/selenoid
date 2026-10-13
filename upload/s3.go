@@ -4,6 +4,8 @@
 package upload
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -14,11 +16,11 @@ import (
 	"time"
 
 	"github.com/aerokube/selenoid/event"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	awssession "github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"github.com/pkg/errors"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 func init() {
@@ -50,32 +52,36 @@ type S3Uploader struct {
 	ExcludeFiles      string
 	ForcePathStyle    bool
 
-	manager *s3manager.Uploader
+	client *s3.Client
 }
 
-func (s3 *S3Uploader) Init() {
-	if s3.Endpoint != "" {
-		config := &aws.Config{
-			Endpoint:         aws.String(s3.Endpoint),
-			Region:           aws.String(s3.Region),
-			S3ForcePathStyle: aws.Bool(s3.ForcePathStyle),
+func (s3u *S3Uploader) Init() {
+	if s3u.Endpoint != "" {
+		opts := []func(*awsconfig.LoadOptions) error{
+			awsconfig.WithRegion(s3u.Region),
+			// S3-compatible storages often reject the default trailing checksums.
+			awsconfig.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired),
+			awsconfig.WithResponseChecksumValidation(aws.ResponseChecksumValidationWhenRequired),
 		}
-		if s3.AccessKey != "" && s3.SecretKey != "" {
-			config.Credentials = credentials.NewStaticCredentials(s3.AccessKey, s3.SecretKey, "")
+		if s3u.AccessKey != "" && s3u.SecretKey != "" {
+			opts = append(opts, awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(s3u.AccessKey, s3u.SecretKey, "")))
 		}
-		sess, err := awssession.NewSession(config)
+		cfg, err := awsconfig.LoadDefaultConfig(context.Background(), opts...)
 		if err != nil {
 			log.Fatalf("[-] [INIT] [Failed to initialize S3 support: %v]", err)
 		}
-		log.Printf("[-] [INIT] [Initialized S3 support: endpoint = %s, region = %s, bucketName = %s, accessKey = %s, keyPattern = %s, includeFiles = %s, excludeFiles = %s, forcePathStyle = %t]", s3.Endpoint, s3.Region, s3.BucketName, s3.AccessKey, s3.KeyPattern, s3.IncludeFiles, s3.ExcludeFiles, s3.ForcePathStyle)
-		s3.manager = s3manager.NewUploader(sess)
+		s3u.client = s3.NewFromConfig(cfg, func(o *s3.Options) {
+			o.BaseEndpoint = aws.String(s3u.Endpoint)
+			o.UsePathStyle = s3u.ForcePathStyle
+		})
+		log.Printf("[-] [INIT] [Initialized S3 support: endpoint = %s, region = %s, bucketName = %s, accessKey = %s, keyPattern = %s, includeFiles = %s, excludeFiles = %s, forcePathStyle = %t]", s3u.Endpoint, s3u.Region, s3u.BucketName, s3u.AccessKey, s3u.KeyPattern, s3u.IncludeFiles, s3u.ExcludeFiles, s3u.ForcePathStyle)
 	}
 }
 
-func (s3 *S3Uploader) Upload(createdFile event.CreatedFile) (bool, error) {
-	if s3.manager != nil {
+func (s3u *S3Uploader) Upload(createdFile event.CreatedFile) (bool, error) {
+	if s3u.client != nil {
 		filename := createdFile.Name
-		fileMatches, err := FileMatches(s3.IncludeFiles, s3.ExcludeFiles, filename)
+		fileMatches, err := FileMatches(s3u.IncludeFiles, s3u.ExcludeFiles, filename)
 		if err != nil {
 			return false, fmt.Errorf("invalid pattern: %v", err)
 		}
@@ -83,14 +89,14 @@ func (s3 *S3Uploader) Upload(createdFile event.CreatedFile) (bool, error) {
 			log.Printf("[%d] [SKIPPING_FILE] [%s] [Does not match specified patterns]", createdFile.RequestId, createdFile.Name)
 			return false, nil
 		}
-		key := GetS3Key(s3.KeyPattern, createdFile)
+		key := GetS3Key(s3u.KeyPattern, createdFile)
 		file, err := os.Open(filename)
-		defer file.Close()
 		if err != nil {
 			return false, fmt.Errorf("failed to open file %s: %v", filename, err)
 		}
-		uploadInput := &s3manager.UploadInput{
-			Bucket: aws.String(s3.BucketName),
+		defer file.Close()
+		uploadInput := &s3.PutObjectInput{
+			Bucket: aws.String(s3u.BucketName),
 			Key:    aws.String(key),
 			Body:   file,
 		}
@@ -98,14 +104,14 @@ func (s3 *S3Uploader) Upload(createdFile event.CreatedFile) (bool, error) {
 		if contentType != "" {
 			uploadInput.ContentType = aws.String(contentType)
 		}
-		if s3.ReducedRedundancy {
-			uploadInput.StorageClass = aws.String("REDUCED_REDUNDANCY")
+		if s3u.ReducedRedundancy {
+			uploadInput.StorageClass = types.StorageClassReducedRedundancy
 		}
-		_, err = s3.manager.Upload(uploadInput)
+		_, err = s3u.client.PutObject(context.Background(), uploadInput)
 		if err != nil {
 			return false, fmt.Errorf("failed to S3 upload %s as %s: %v", filename, key, err)
 		}
-		if !s3.KeepFiles {
+		if !s3u.KeepFiles {
 			err := os.Remove(filename)
 			if err != nil {
 				return true, fmt.Errorf("failed to remove uploaded file %s: %v", filename, err)

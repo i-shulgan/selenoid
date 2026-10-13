@@ -4,9 +4,11 @@
 package main
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/aerokube/selenoid/event"
@@ -23,9 +25,18 @@ func init() {
 	s3Srv = httptest.NewServer(s3Mux())
 }
 
+type s3Request struct {
+	method, path, storageClass, contentType, body string
+}
+
+var s3Requests = make(chan s3Request, 10)
+
 func s3Mux() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(_ http.ResponseWriter, _ *http.Request) {})
+	mux.HandleFunc("/", func(_ http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		s3Requests <- s3Request{r.Method, r.URL.Path, r.Header.Get("X-Amz-Storage-Class"), r.Header.Get("Content-Type"), string(body)}
+	})
 	return mux
 }
 
@@ -50,7 +61,9 @@ func TestS3Uploader(t *testing.T) {
 		ReducedRedundancy: true,
 	}
 	uploader.Init()
-	f, _ := os.CreateTemp("", "some-file")
+	f, _ := os.CreateTemp("", "some-file*.log")
+	_, _ = f.WriteString("log contents")
+	_ = f.Close()
 	input := event.CreatedFile{
 		Event: event.Event{
 			RequestId: 4342,
@@ -63,6 +76,18 @@ func TestS3Uploader(t *testing.T) {
 	uploaded, err := uploader.Upload(input)
 	assert.NoError(t, err)
 	assert.True(t, uploaded)
+
+	req := <-s3Requests
+	assert.Equal(t, http.MethodPut, req.method)
+	assert.Equal(t, "/test-bucket/"+filepath.Base(f.Name()), req.path)
+	assert.Equal(t, "REDUCED_REDUNDANCY", req.storageClass)
+	assert.Equal(t, "log contents", req.body)
+	_, err = os.Stat(f.Name())
+	assert.True(t, os.IsNotExist(err), "uploaded file must be removed unless -s3-keep-files is set")
+
+	input.Name = "/does/not/exist.log"
+	_, err = uploader.Upload(input)
+	assert.Error(t, err)
 }
 
 func TestGetKey(t *testing.T) {
