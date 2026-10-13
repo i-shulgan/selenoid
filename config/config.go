@@ -1,16 +1,18 @@
 package config
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/aerokube/selenoid/session"
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 )
 
 // Session - session id and vnc flag
@@ -134,12 +136,43 @@ func (config *Config) Find(name string, version string) (*Browser, string, bool)
 			return nil, "", false
 		}
 	}
-	for v, b := range browser.Versions {
-		if strings.HasPrefix(v, version) {
-			return b, v, true
+	if b, ok := browser.Versions[version]; ok {
+		return b, version, true
+	}
+	// Map iteration order is random, so pick among prefix matches
+	// explicitly: whole version components first ("12" means 12.x, not
+	// 120.x), then the highest version.
+	best, bestWhole := "", false
+	for v := range browser.Versions {
+		if !strings.HasPrefix(v, version) {
+			continue
+		}
+		whole := len(v) > len(version) && v[len(version)] == '.'
+		if best == "" || (whole && !bestWhole) || (whole == bestWhole && compareVersions(v, best) > 0) {
+			best, bestWhole = v, whole
 		}
 	}
+	if best != "" {
+		return browser.Versions[best], best, true
+	}
 	return nil, version, false
+}
+
+// compareVersions compares dot-separated versions numerically where
+// possible, e.g. 9.0 < 10.0 < 10.1.
+func compareVersions(a, b string) int {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(as) && i < len(bs); i++ {
+		an, aErr := strconv.Atoi(as[i])
+		bn, bErr := strconv.Atoi(bs[i])
+		switch {
+		case aErr == nil && bErr == nil && an != bn:
+			return cmp.Compare(an, bn)
+		case (aErr != nil || bErr != nil) && as[i] != bs[i]:
+			return strings.Compare(as[i], bs[i])
+		}
+	}
+	return cmp.Compare(len(as), len(bs))
 }
 
 // State - get current state

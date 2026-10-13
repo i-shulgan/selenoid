@@ -10,17 +10,21 @@ import (
 	"net/url"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/aerokube/selenoid/config"
 	"github.com/aerokube/selenoid/service"
 	"github.com/aerokube/selenoid/session"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	assert "github.com/stretchr/testify/require"
 	"golang.org/x/net/websocket"
 )
+
+// dockerAPIVersion is the Docker API version the mock daemon speaks.
+const dockerAPIVersion = "1.44"
 
 var (
 	mockServer *httptest.Server
@@ -40,8 +44,8 @@ func updateMux(mux http.Handler) {
 	defer lock.Unlock()
 	mockServer = httptest.NewServer(mux)
 	_ = os.Setenv("DOCKER_HOST", "tcp://"+hostPort(mockServer.URL))
-	_ = os.Setenv("DOCKER_API_VERSION", "1.29")
-	cli, _ = client.NewClientWithOpts(client.FromEnv)
+	_ = os.Setenv("DOCKER_API_VERSION", dockerAPIVersion)
+	cli, _ = client.New(client.FromEnv)
 }
 
 func testMux() http.Handler {
@@ -55,24 +59,24 @@ func testMux() http.Handler {
 	))
 
 	//Docker API mock
-	mux.HandleFunc("/v1.29/containers/create", http.HandlerFunc(
+	mux.HandleFunc("/v"+dockerAPIVersion+"/containers/create", http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusCreated)
 			output := `{"id": "e90e34656806", "warnings": []}`
 			_, _ = w.Write([]byte(output))
 		},
 	))
-	mux.HandleFunc("/v1.29/containers/e90e34656806/start", http.HandlerFunc(
+	mux.HandleFunc("/v"+dockerAPIVersion+"/containers/e90e34656806/start", http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		},
 	))
-	mux.HandleFunc("/v1.29/containers/e90e34656806/kill", http.HandlerFunc(
+	mux.HandleFunc("/v"+dockerAPIVersion+"/containers/e90e34656806/kill", http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		},
 	))
-	mux.HandleFunc("/v1.29/containers/e90e34656806/logs", http.HandlerFunc(
+	mux.HandleFunc("/v"+dockerAPIVersion+"/containers/e90e34656806/logs", http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Add("Content-Type", "text/plain; charset=utf-8")
 			w.Header().Add("Transfer-Encoding", "chunked")
@@ -89,7 +93,7 @@ func testMux() http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 		},
 	))
-	mux.HandleFunc("/v1.29/containers/e90e34656806/json", http.HandlerFunc(
+	mux.HandleFunc("/v"+dockerAPIVersion+"/containers/e90e34656806/json", http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			p := port(mockServer.URL)
@@ -162,7 +166,7 @@ func testMux() http.Handler {
 			_, _ = w.Write([]byte(output))
 		},
 	))
-	mux.HandleFunc("/v1.29/networks/net-1/connect", http.HandlerFunc(
+	mux.HandleFunc("/v"+dockerAPIVersion+"/networks/net-1/connect", http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		},
@@ -272,7 +276,7 @@ func testDocker(t *testing.T, env *service.Environment, cfg *config.Config) {
 }
 
 func createDockerStarter(t *testing.T, env *service.Environment, cfg *config.Config) service.Starter {
-	cli, err := client.NewClientWithOpts(client.FromEnv)
+	cli, err := client.New(client.FromEnv)
 	assert.NoError(t, err)
 	manager := service.DefaultManager{Environment: env, Client: cli, Config: cfg}
 	caps := session.Caps{
@@ -305,19 +309,19 @@ func createDockerStarter(t *testing.T, env *service.Environment, cfg *config.Con
 
 func failingMux(numDeleteRequests *int) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1.29/containers/create", http.HandlerFunc(
+	mux.HandleFunc("/v"+dockerAPIVersion+"/containers/create", http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusCreated)
 			output := `{"id": "e90e34656806", "warnings": []}`
 			_, _ = w.Write([]byte(output))
 		},
 	))
-	mux.HandleFunc("/v1.29/containers/e90e34656806/start", http.HandlerFunc(
+	mux.HandleFunc("/v"+dockerAPIVersion+"/containers/e90e34656806/start", http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 		},
 	))
-	mux.HandleFunc("/v1.29/containers/e90e34656806", http.HandlerFunc(
+	mux.HandleFunc("/v"+dockerAPIVersion+"/containers/e90e34656806", http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			*numDeleteRequests++
 			w.WriteHeader(http.StatusNoContent)
@@ -335,6 +339,29 @@ func TestDeleteContainerOnStartupError(t *testing.T) {
 	_, err := starter.StartWithCancel()
 	assert.Error(t, err)
 	assert.Equal(t, numDeleteRequests, 1)
+}
+
+func TestDeleteContainerWhenNetworkConnectFails(t *testing.T) {
+	var deleted atomic.Int32
+	mux := http.NewServeMux()
+	mux.Handle("/", testMux())
+	mux.HandleFunc("/v"+dockerAPIVersion+"/networks/net-1/connect", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	mux.HandleFunc("/v"+dockerAPIVersion+"/containers/e90e34656806", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deleted.Add(1)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	updateMux(mux)
+	defer updateMux(testMux())
+	env := testEnvironment()
+	starter := createDockerStarter(t, env, testConfig(env))
+	_, err := starter.StartWithCancel()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "net-1")
+	assert.Equal(t, int32(1), deleted.Load(), "the started container must be removed")
 }
 
 func TestFindDriver(t *testing.T) {
@@ -388,9 +415,8 @@ func readDataFromWebSocket(t *testing.T, wsURL string) string {
 	assert.NoError(t, err)
 
 	var msg = make([]byte, 512)
-	_, err = ws.Read(msg)
+	_, _ = ws.Read(msg)
 	msg = bytes.Trim(msg, "\x00")
-	//assert.NoError(t, err)
 	return string(msg)
 }
 

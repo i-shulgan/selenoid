@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,7 +10,7 @@ import (
 
 	"github.com/aerokube/selenoid/config"
 	"github.com/aerokube/selenoid/session"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 )
 
 // Environment - all settings that influence browser startup
@@ -95,35 +96,29 @@ func (m *DefaultManager) Find(caps session.Caps, requestId uint64) (Starter, boo
 	return nil, false
 }
 
+// wait polls u until it answers or t passes. Every request is bound to the
+// deadline, so a service that accepts connections but never answers does
+// not leave a goroutine behind.
 func wait(u string, t time.Duration) error {
-	up := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case <-done:
-				return
-			default:
-			}
-			req, _ := http.NewRequest(http.MethodHead, u, nil)
-			req.Close = true
-			resp, err := http.DefaultClient.Do(req)
-			if resp != nil {
-				_ = resp.Body.Close()
-			}
-			if err != nil {
-				<-time.After(50 * time.Millisecond)
-				continue
-			}
-			up <- struct{}{}
-			return
+	ctx, cancel := context.WithTimeout(context.Background(), t)
+	defer cancel()
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodHead, u, nil)
+		if err != nil {
+			return fmt.Errorf("invalid service URL %s: %v", u, err)
 		}
-	}()
-	select {
-	case <-time.After(t):
-		close(done)
-		return fmt.Errorf("%s does not respond in %v", u, t)
-	case <-up:
+		req.Close = true
+		resp, err := http.DefaultClient.Do(req)
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		if err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%s does not respond in %v", u, t)
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
-	return nil
 }

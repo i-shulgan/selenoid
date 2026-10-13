@@ -327,7 +327,7 @@ func TestSessionWithContentTypeCreatedWdHub(t *testing.T) {
 }
 
 func TestSessionFailedAfterTimeout(t *testing.T) {
-	newSessionAttemptTimeout = 10 * time.Millisecond
+	setGlobal(t, &newSessionAttemptTimeout, 10*time.Millisecond)
 	manager = &HTTPTest{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-time.After(100 * time.Millisecond)
 	})}
@@ -366,8 +366,8 @@ func TestClientDisconnected(t *testing.T) {
 }
 
 func TestSessionFailedAfterTwoTimeout(t *testing.T) {
-	retryCount = 2
-	newSessionAttemptTimeout = 10 * time.Millisecond
+	setGlobal(t, &retryCount, 2)
+	setGlobal(t, &newSessionAttemptTimeout, 10*time.Millisecond)
 	manager = &HTTPTest{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-time.After(100 * time.Millisecond)
 	})}
@@ -438,7 +438,12 @@ func TestSessionCreatedRemoveExtensionCapabilities(t *testing.T) {
 		_, chromeOptionsPresent = browser.W3CCaps.AlwaysMatch["goog:chromeOptions"]
 		assert.Len(t, browser.W3CCaps.FirstMatch, 1)
 		_, firstMatchPresent = browser.W3CCaps.FirstMatch[0]["selenoid:options"]
+		_, _ = w.Write([]byte(`{"value":{"sessionId":"remove-extension-caps","capabilities":{}}}`))
 	}))
+	t.Cleanup(func() {
+		sessions.Remove("remove-extension-caps")
+		queue.Release()
+	})
 	manager = &HTTPTest{Handler: root}
 
 	resp, err := httpClient.Post(With(srv.URL).Path("/wd/hub/session"), "", bytes.NewReader([]byte(`{"desiredCapabilities": {"browserName": "chrome", "selenoid:options": {"enableVNC": true}}, "capabilities":{"alwaysMatch":{"browserName": "chrome", "goog:chromeOptions": {"args": ["headless"]}, "selenoid:options":{"enableVNC": true}}, "firstMatch": [{"platform": "linux", "selenoid:options": {"enableVideo": true}}]}}`)))
@@ -479,7 +484,7 @@ func TestProxySessionPanicOnAbortHandler(t *testing.T) {
 	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&sess))
 
 	req, _ := http.NewRequest(http.MethodGet, With(srv.URL).Path(fmt.Sprintf("/wd/hub/session/%s/url?abort-handler=true", sess["sessionId"])), nil)
-	resp, err = http.DefaultClient.Do(req)
+	_, err = http.DefaultClient.Do(req)
 	assert.Error(t, err)
 
 	sessions.Remove(sess["sessionId"])
@@ -889,7 +894,7 @@ func testClipboard(t *testing.T, path func(string) string) {
 
 	rsp, err = http.Post(With(srv.URL).Path(path(sess["sessionId"])), "text/plain", bytes.NewReader([]byte("any-data")))
 	assert.NoError(t, err)
-	assert.Equal(t, resp.StatusCode, http.StatusOK)
+	assert.Equal(t, http.StatusOK, rsp.StatusCode)
 
 	sessions.Remove(sess["sessionId"])
 	queue.Release()

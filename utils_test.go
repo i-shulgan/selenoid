@@ -284,3 +284,10 @@ func TestBrowserName(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, caps.BrowserName(), "firefox")
 }
+
+// setGlobal sets a package variable for the duration of the test.
+func setGlobal[T any](t *testing.T, p *T, v T) {
+	old := *p
+	*p = v
+	t.Cleanup(func() { *p = old })
+}

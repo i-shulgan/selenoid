@@ -1,0 +1,13 @@
+*
+!go.mod
+!go.sum
+!*.go
+!config/
+!event/
+!info/
+!jsonerror/
+!protect/
+!service/
+!session/
+!upload/
+**/*_test.go

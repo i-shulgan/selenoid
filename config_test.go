@@ -255,3 +255,34 @@ func TestConfigConcurrentRead(t *testing.T) {
 	<-done
 	<-done
 }
+
+func TestConfigFindPrefixIsDeterministic(t *testing.T) {
+	confFile := configfile(`{"chrome":{"default":"128.0","versions":{
+		"12.0":{"image":"chrome-12"},
+		"120.0":{"image":"chrome-120"},
+		"128.0":{"image":"chrome-128"},
+		"128.1":{"image":"chrome-128.1"},
+		"129.0":{"image":"chrome-129"}}}}`)
+	defer os.Remove(confFile)
+	conf := config.NewConfig()
+	assert.NoError(t, conf.Load(confFile, testLogConf))
+
+	for i := 0; i < 50; i++ {
+		_, v, ok := conf.Find("chrome", "12")
+		assert.True(t, ok)
+		assert.Equal(t, "12.0", v, "a whole version component wins over a longer number")
+
+		_, v, ok = conf.Find("chrome", "128")
+		assert.True(t, ok)
+		assert.Equal(t, "128.1", v, "the highest matching version is chosen")
+
+		_, v, ok = conf.Find("chrome", "1")
+		assert.True(t, ok)
+		assert.Equal(t, "129.0", v)
+
+		b, v, ok := conf.Find("chrome", "128.0")
+		assert.True(t, ok)
+		assert.Equal(t, "128.0", v, "an exact match wins")
+		assert.Equal(t, "chrome-128", b.Image)
+	}
+}

@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"github.com/aerokube/selenoid/info"
-	"github.com/docker/docker/api"
 	"log"
 	"net"
 	"net/http"
@@ -26,7 +25,7 @@ import (
 	"github.com/aerokube/selenoid/service"
 	"github.com/aerokube/selenoid/session"
 	"github.com/aerokube/selenoid/upload"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 	"golang.org/x/net/websocket"
 )
@@ -129,24 +128,16 @@ func init() {
 	}
 
 	if !disableDocker {
-		videoOutputDir, err = filepath.Abs(videoOutputDir)
+		videoOutputDir, err = outputDir(videoOutputDir)
 		if err != nil {
-			log.Fatalf("[-] [INIT] [Invalid video output dir %s: %v]", videoOutputDir, err)
-		}
-		err = os.MkdirAll(videoOutputDir, os.FileMode(0644))
-		if err != nil {
-			log.Fatalf("[-] [INIT] [Failed to create video output dir %s: %v]", videoOutputDir, err)
+			log.Fatalf("[-] [INIT] [Invalid video output dir: %v]", err)
 		}
 		log.Printf("[-] [INIT] [Video Dir: %s]", videoOutputDir)
 	}
 	if logOutputDir != "" {
-		logOutputDir, err = filepath.Abs(logOutputDir)
+		logOutputDir, err = outputDir(logOutputDir)
 		if err != nil {
-			log.Fatalf("[-] [INIT] [Invalid log output dir %s: %v]", logOutputDir, err)
-		}
-		err = os.MkdirAll(logOutputDir, os.FileMode(0644))
-		if err != nil {
-			log.Fatalf("[-] [INIT] [Failed to create log output dir %s: %v]", logOutputDir, err)
+			log.Fatalf("[-] [INIT] [Invalid log output dir: %v]", err)
 		}
 		log.Printf("[-] [INIT] [Logs Dir: %s]", logOutputDir)
 		if saveAllLogs {
@@ -187,72 +178,41 @@ func init() {
 	}
 	ip, _, _ := net.SplitHostPort(u.Host)
 	environment.IP = ip
-	cli, err = createCompatibleDockerClient(
-		func(specifiedApiVersion string) {
-			log.Printf("[-] [INIT] [Using Docker API version: %s]", specifiedApiVersion)
-		},
-		func(determinedApiVersion string) {
-			log.Printf("[-] [INIT] [Your Docker API version is %s]", determinedApiVersion)
-		},
-		func(defaultApiVersion string) {
-			log.Printf("[-] [INIT] [Did not manage to determine your Docker API version - using default version: %s]", defaultApiVersion)
-		},
-	)
+	cli, err = newDockerClient()
 	if err != nil {
 		log.Fatalf("[-] [INIT] [New docker client: %v]", err)
 	}
 	manager = &service.DefaultManager{Environment: &environment, Client: cli, Config: conf}
 }
 
-func createCompatibleDockerClient(onVersionSpecified, onVersionDetermined, onUsingDefaultVersion func(string)) (*client.Client, error) {
-	const dockerApiVersion = "DOCKER_API_VERSION"
-	dockerApiVersionEnv := os.Getenv(dockerApiVersion)
-	if dockerApiVersionEnv != "" {
-		onVersionSpecified(dockerApiVersionEnv)
-	} else {
-		maxMajorVersion, maxMinorVersion := parseVersion(api.DefaultVersion)
-		minMajorVersion, minMinorVersion := parseVersion("1.24")
-		for majorVersion := maxMajorVersion; majorVersion >= minMajorVersion; majorVersion-- {
-			for minorVersion := maxMinorVersion; minorVersion >= minMinorVersion; minorVersion-- {
-				apiVersion := fmt.Sprintf("%d.%d", majorVersion, minorVersion)
-				_ = os.Setenv(dockerApiVersion, apiVersion)
-				docker, err := client.NewClientWithOpts(client.FromEnv)
-				if err != nil {
-					return nil, err
-				}
-				if isDockerAPIVersionCorrect(docker) {
-					onVersionDetermined(apiVersion)
-					return docker, nil
-				}
-				_ = docker.Close()
-			}
-		}
-		onUsingDefaultVersion(api.DefaultVersion)
+// newDockerClient connects to DOCKER_HOST. Unless DOCKER_API_VERSION is set,
+// the API version is negotiated with the daemon.
+// outputDir makes dir absolute and creates it. Directories need the execute
+// bit: with 0644 a non-root Selenoid could not write files into them.
+func outputDir(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("%s: %v", dir, err)
 	}
-	return client.NewClientWithOpts(client.FromEnv)
+	if err := os.MkdirAll(abs, 0755); err != nil {
+		return "", fmt.Errorf("create %s: %v", abs, err)
+	}
+	return abs, nil
 }
 
-func parseVersion(ver string) (int, int) {
-	const point = "."
-	pieces := strings.Split(ver, point)
-	major, err := strconv.Atoi(pieces[0])
+func newDockerClient() (*client.Client, error) {
+	docker, err := client.New(client.FromEnv)
 	if err != nil {
-		return 0, 0
+		return nil, err
 	}
-	minor, err := strconv.Atoi(pieces[1])
-	if err != nil {
-		return 0, 0
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := docker.ServerVersion(ctx, client.ServerVersionOptions{}); err != nil {
+		log.Printf("[-] [INIT] [Failed to determine Docker API version, using %s: %v]", docker.ClientVersion(), err)
+		return docker, nil
 	}
-	return major, minor
-}
-
-func isDockerAPIVersionCorrect(docker *client.Client) bool {
-	ctx := context.Background()
-	apiInfo, err := docker.ServerVersion(ctx)
-	if err != nil {
-		return false
-	}
-	return apiInfo.APIVersion == docker.ClientVersion()
+	log.Printf("[-] [INIT] [Using Docker API version: %s]", docker.ClientVersion())
+	return docker, nil
 }
 
 func parseGgrHost(s string) *ggr.Host {
@@ -273,7 +233,7 @@ func parseGgrHost(s string) *ggr.Host {
 }
 
 func onSIGHUP(fn func()) {
-	sig := make(chan os.Signal)
+	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGHUP)
 	go func() {
 		for {
@@ -408,14 +368,14 @@ func main() {
 	log.Printf("[-] [INIT] [Timezone: %s]", time.Local)
 	log.Printf("[-] [INIT] [Listening on %s]", listen)
 
-	stop := make(chan os.Signal)
+	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
 	server := &http.Server{
 		Addr:    listen,
 		Handler: handler(),
 	}
-	e := make(chan error)
+	e := make(chan error, 1)
 	go func() {
 		e <- server.ListenAndServe()
 	}()
