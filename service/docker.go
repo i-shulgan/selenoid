@@ -334,6 +334,12 @@ const (
 
 func getLogConfig(logConfig ctr.LogConfig, caps session.Caps) ctr.LogConfig {
 	if logConfig.Config != nil {
+		// The map belongs to the loaded configuration shared by all sessions.
+		cfg := make(map[string]string, len(logConfig.Config)+2)
+		for k, v := range logConfig.Config {
+			cfg[k] = v
+		}
+		logConfig.Config = cfg
 		_, ok := logConfig.Config[tag]
 		if caps.TestName != "" && !ok {
 			logConfig.Config[tag] = caps.TestName
