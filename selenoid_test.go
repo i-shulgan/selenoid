@@ -327,7 +327,7 @@ func TestSessionWithContentTypeCreatedWdHub(t *testing.T) {
 }
 
 func TestSessionFailedAfterTimeout(t *testing.T) {
-	newSessionAttemptTimeout = 10 * time.Millisecond
+	setGlobal(t, &newSessionAttemptTimeout, 10*time.Millisecond)
 	manager = &HTTPTest{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-time.After(100 * time.Millisecond)
 	})}
@@ -366,8 +366,8 @@ func TestClientDisconnected(t *testing.T) {
 }
 
 func TestSessionFailedAfterTwoTimeout(t *testing.T) {
-	retryCount = 2
-	newSessionAttemptTimeout = 10 * time.Millisecond
+	setGlobal(t, &retryCount, 2)
+	setGlobal(t, &newSessionAttemptTimeout, 10*time.Millisecond)
 	manager = &HTTPTest{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-time.After(100 * time.Millisecond)
 	})}
