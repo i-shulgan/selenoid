@@ -391,9 +391,8 @@ func readDataFromWebSocket(t *testing.T, wsURL string) string {
 	assert.NoError(t, err)
 
 	var msg = make([]byte, 512)
-	_, err = ws.Read(msg)
+	_, _ = ws.Read(msg)
 	msg = bytes.Trim(msg, "\x00")
-	//assert.NoError(t, err)
 	return string(msg)
 }
 

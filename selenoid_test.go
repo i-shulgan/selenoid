@@ -479,7 +479,7 @@ func TestProxySessionPanicOnAbortHandler(t *testing.T) {
 	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&sess))
 
 	req, _ := http.NewRequest(http.MethodGet, With(srv.URL).Path(fmt.Sprintf("/wd/hub/session/%s/url?abort-handler=true", sess["sessionId"])), nil)
-	resp, err = http.DefaultClient.Do(req)
+	_, err = http.DefaultClient.Do(req)
 	assert.Error(t, err)
 
 	sessions.Remove(sess["sessionId"])
@@ -889,7 +889,7 @@ func testClipboard(t *testing.T, path func(string) string) {
 
 	rsp, err = http.Post(With(srv.URL).Path(path(sess["sessionId"])), "text/plain", bytes.NewReader([]byte("any-data")))
 	assert.NoError(t, err)
-	assert.Equal(t, resp.StatusCode, http.StatusOK)
+	assert.Equal(t, http.StatusOK, rsp.StatusCode)
 
 	sessions.Remove(sess["sessionId"])
 	queue.Release()

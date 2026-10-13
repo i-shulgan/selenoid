@@ -444,9 +444,7 @@ func getLabels(service *config.Browser, caps session.Caps) map[string]string {
 }
 
 func getHostPort(env Environment, servicePort string, caps session.Caps, stat ctr.InspectResponse, pc map[string]network.Port) session.HostPort {
-	fn := func(containerPort string, port network.Port) string {
-		return ""
-	}
+	var fn func(containerPort string, port network.Port) string
 	if env.IP == "" {
 		if env.InDocker {
 			containerIP := getContainerIP(env.Network, stat)

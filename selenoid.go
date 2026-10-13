@@ -188,6 +188,7 @@ func create(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		log.Printf("[%d] [ENVIRONMENT_NOT_AVAILABLE] [%s] [%s]", requestId, caps.BrowserName(), caps.Version)
+		//lint:ignore ST1005 clients and docs match this exact message
 		jsonerror.InvalidArgument(errors.New("Requested environment is not available")).Encode(w)
 		queue.Drop()
 		return
@@ -232,7 +233,8 @@ func create(w http.ResponseWriter, r *http.Request) {
 				if i < retryCount {
 					continue
 				}
-				err := fmt.Errorf("New session attempts retry count exceeded")
+				//lint:ignore ST1005 clients and docs match this exact message
+				err := errors.New("New session attempts retry count exceeded")
 				log.Printf("[%d] [SESSION_FAILED] [%s] [%s]", requestId, u.String(), err)
 				jsonerror.UnknownError(err).Encode(w)
 			case context.Canceled:
@@ -540,7 +542,9 @@ func proxy(w http.ResponseWriter, r *http.Request) {
 	}()
 	requestId := serial()
 	(&httputil.ReverseProxy{
-		Director: func(r *http.Request) {
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			setForwardedFor(pr)
+			r := pr.Out
 			fragments := strings.Split(r.URL.Path, slash)
 			id := fragments[2]
 			sess, ok := sessions.Get(id)
@@ -596,6 +600,19 @@ func proxy(w http.ResponseWriter, r *http.Request) {
 	}).ServeHTTP(w, r)
 }
 
+// setForwardedFor appends the client address to X-Forwarded-For like
+// ReverseProxy.Director did: with Rewrite the inbound header is dropped.
+func setForwardedFor(pr *httputil.ProxyRequest) {
+	clientIP, _, err := net.SplitHostPort(pr.In.RemoteAddr)
+	if err != nil {
+		return
+	}
+	if prior := pr.In.Header["X-Forwarded-For"]; len(prior) > 0 {
+		clientIP = strings.Join(prior, ", ") + ", " + clientIP
+	}
+	pr.Out.Header.Set("X-Forwarded-For", clientIP)
+}
+
 func defaultErrorHandler(requestId uint64) func(http.ResponseWriter, *http.Request, error) {
 	return func(w http.ResponseWriter, r *http.Request, err error) {
 		user, remote := info.RequestInfo(r)
@@ -619,7 +636,9 @@ func reverseProxy(hostFn func(sess *session.Session) string, status string) func
 				request{r}.session(sid).Delete(requestId)
 			})
 			(&httputil.ReverseProxy{
-				Director: func(r *http.Request) {
+				Rewrite: func(pr *httputil.ProxyRequest) {
+					setForwardedFor(pr)
+					r := pr.Out
 					r.URL.Scheme = "http"
 					r.URL.Host = hostFn(sess)
 					r.URL.Path = remainingPath
