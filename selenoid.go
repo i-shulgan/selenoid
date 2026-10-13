@@ -678,20 +678,31 @@ func fileUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	file := z.File[0]
+	name := filepath.Base(file.Name)
+	if file.FileInfo().IsDir() || name == "." || name == ".." || name == string(filepath.Separator) {
+		jsonerror.InvalidArgument(fmt.Errorf("invalid file name: %q", file.Name)).Encode(w)
+		return
+	}
+	dir, err := sessionUploadDir(r.Header.Get("X-Selenoid-File"))
+	if err != nil {
+		jsonerror.InvalidArgument(err).Encode(w)
+		return
+	}
 	src, err := file.Open()
 	if err != nil {
 		jsonerror.InvalidArgument(err).Encode(w)
 		return
 	}
 	defer src.Close()
-	dir := r.Header.Get("X-Selenoid-File")
 	err = os.MkdirAll(dir, 0755)
 	if err != nil {
 		jsonerror.UnknownError(err).Encode(w)
 		return
 	}
-	fileName := filepath.Join(dir, file.Name)
-	dst, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE, 0644)
+	// Only the base name is used: a zip entry like ../../etc/x must not
+	// escape the session directory.
+	fileName := filepath.Join(dir, name)
+	dst, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		jsonerror.UnknownError(err).Encode(w)
 		return
@@ -709,6 +720,24 @@ func fileUpload(w http.ResponseWriter, r *http.Request) {
 		V: fileName,
 	}
 	_ = json.NewEncoder(w).Encode(reply)
+}
+
+// sessionUploadDir checks the upload directory set by proxy: /file is also
+// reachable directly, so the header must name the temporary directory of a
+// running session and nothing else.
+func sessionUploadDir(dir string) (string, error) {
+	if dir == "" {
+		return "", errors.New("upload directory is not set")
+	}
+	dir = filepath.Clean(dir)
+	id := filepath.Base(dir)
+	if filepath.Dir(dir) != filepath.Clean(os.TempDir()) {
+		return "", fmt.Errorf("invalid upload directory: %s", dir)
+	}
+	if _, ok := sessions.Get(id); !ok {
+		return "", fmt.Errorf("unknown session %s", id)
+	}
+	return dir, nil
 }
 
 func vnc(wsconn *websocket.Conn) {
