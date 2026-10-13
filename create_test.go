@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -103,4 +105,24 @@ func TestCreateDriverErrorIsForwarded(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 	assert.Equal(t, "Chrome failed to start", errorMessage(reply))
 	assert.Equal(t, 0, queue.Pending())
+}
+
+func TestNonPositiveSessionTimeout(t *testing.T) {
+	for _, v := range []string{"-1s", "0s"} {
+		_, err := getSessionTimeout(v, time.Hour, time.Minute)
+		assert.Error(t, err, v)
+	}
+	d, err := getSessionTimeout("90s", time.Hour, time.Minute)
+	assert.NoError(t, err)
+	assert.Equal(t, 90*time.Second, d)
+}
+
+func TestOutputDirIsTraversable(t *testing.T) {
+	dir, err := outputDir(filepath.Join(t.TempDir(), "a", "video"))
+	assert.NoError(t, err)
+	assert.True(t, filepath.IsAbs(dir))
+	info, err := os.Stat(dir)
+	assert.NoError(t, err)
+	assert.Equal(t, os.FileMode(0755), info.Mode().Perm()&0755)
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, "x.mp4"), nil, 0644))
 }

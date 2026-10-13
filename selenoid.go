@@ -527,6 +527,9 @@ func getSessionTimeout(sessionTimeout string, maxTimeout time.Duration, defaultT
 		if err != nil {
 			return 0, fmt.Errorf("invalid sessionTimeout capability: %v", err)
 		}
+		if st <= 0 {
+			return 0, fmt.Errorf("invalid sessionTimeout capability: %s must be positive", sessionTimeout)
+		}
 		if st <= maxTimeout {
 			return st, nil
 		}

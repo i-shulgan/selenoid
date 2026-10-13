@@ -128,24 +128,16 @@ func init() {
 	}
 
 	if !disableDocker {
-		videoOutputDir, err = filepath.Abs(videoOutputDir)
+		videoOutputDir, err = outputDir(videoOutputDir)
 		if err != nil {
-			log.Fatalf("[-] [INIT] [Invalid video output dir %s: %v]", videoOutputDir, err)
-		}
-		err = os.MkdirAll(videoOutputDir, os.FileMode(0644))
-		if err != nil {
-			log.Fatalf("[-] [INIT] [Failed to create video output dir %s: %v]", videoOutputDir, err)
+			log.Fatalf("[-] [INIT] [Invalid video output dir: %v]", err)
 		}
 		log.Printf("[-] [INIT] [Video Dir: %s]", videoOutputDir)
 	}
 	if logOutputDir != "" {
-		logOutputDir, err = filepath.Abs(logOutputDir)
+		logOutputDir, err = outputDir(logOutputDir)
 		if err != nil {
-			log.Fatalf("[-] [INIT] [Invalid log output dir %s: %v]", logOutputDir, err)
-		}
-		err = os.MkdirAll(logOutputDir, os.FileMode(0644))
-		if err != nil {
-			log.Fatalf("[-] [INIT] [Failed to create log output dir %s: %v]", logOutputDir, err)
+			log.Fatalf("[-] [INIT] [Invalid log output dir: %v]", err)
 		}
 		log.Printf("[-] [INIT] [Logs Dir: %s]", logOutputDir)
 		if saveAllLogs {
@@ -195,6 +187,19 @@ func init() {
 
 // newDockerClient connects to DOCKER_HOST. Unless DOCKER_API_VERSION is set,
 // the API version is negotiated with the daemon.
+// outputDir makes dir absolute and creates it. Directories need the execute
+// bit: with 0644 a non-root Selenoid could not write files into them.
+func outputDir(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("%s: %v", dir, err)
+	}
+	if err := os.MkdirAll(abs, 0755); err != nil {
+		return "", fmt.Errorf("create %s: %v", abs, err)
+	}
+	return abs, nil
+}
+
 func newDockerClient() (*client.Client, error) {
 	docker, err := client.New(client.FromEnv)
 	if err != nil {
