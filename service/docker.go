@@ -181,6 +181,7 @@ func (d *Docker) StartWithCancel() (*StartedService, error) {
 		for _, networkName := range d.AdditionalNetworks {
 			_, err = cl.NetworkConnect(ctx, networkName, client.NetworkConnectOptions{Container: browserContainerId})
 			if err != nil {
+				removeContainer(ctx, cl, requestId, browserContainerId)
 				return nil, fmt.Errorf("failed to connect container %s to network %s: %v", browserContainerId, networkName, err)
 			}
 		}

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -338,6 +339,29 @@ func TestDeleteContainerOnStartupError(t *testing.T) {
 	_, err := starter.StartWithCancel()
 	assert.Error(t, err)
 	assert.Equal(t, numDeleteRequests, 1)
+}
+
+func TestDeleteContainerWhenNetworkConnectFails(t *testing.T) {
+	var deleted atomic.Int32
+	mux := http.NewServeMux()
+	mux.Handle("/", testMux())
+	mux.HandleFunc("/v"+dockerAPIVersion+"/networks/net-1/connect", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	mux.HandleFunc("/v"+dockerAPIVersion+"/containers/e90e34656806", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deleted.Add(1)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	updateMux(mux)
+	defer updateMux(testMux())
+	env := testEnvironment()
+	starter := createDockerStarter(t, env, testConfig(env))
+	_, err := starter.StartWithCancel()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "net-1")
+	assert.Equal(t, int32(1), deleted.Load(), "the started container must be removed")
 }
 
 func TestFindDriver(t *testing.T) {
