@@ -211,18 +211,40 @@ jobs:
     env:
       TAG: ${{ needs.release.outputs.tag_name }}
     steps:
+      - uses: actions/checkout@v5
+
       - uses: actions/download-artifact@v4
         with:
           pattern: binaries-*
           path: dist
           merge-multiple: true
 
+      - run: chmod +x dist/selenoid_linux_*
+
+      # Deb packages are off until the BUILD_DEB repository variable is "true"
+      # (Settings -> Secrets and variables -> Actions -> Variables).
+      - uses: actions/setup-go@v6
+        if: vars.BUILD_DEB == 'true'
+        with:
+          go-version-file: go.mod
+
+      - name: Deb packages
+        if: vars.BUILD_DEB == 'true'
+        env:
+          VERSION: ${{ needs.release.outputs.tag_name || 'v0.0.0-dev' }}
+        run: |
+          set -euo pipefail
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          for arch in amd64 arm64; do
+            ARCH=$arch nfpm package -f nfpm.yaml -p deb -t dist/
+          done
+
       - name: SHA256SUMS
         working-directory: dist
         run: |
           set -euo pipefail
-          chmod +x selenoid_linux_*
-          sha256sum selenoid_linux_* > SHA256SUMS
+          shopt -s nullglob
+          sha256sum -- selenoid_linux_* *.deb > SHA256SUMS
           cat SHA256SUMS
           {
             echo '### Release files'
